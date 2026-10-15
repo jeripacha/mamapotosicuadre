@@ -34,7 +34,7 @@ const productos = [
   { id: "johnnie_walker_red_label", nombre: "Johnnie Walker Red Label", precio: 550 },
   { id: "johnnie_walker_black_label", nombre: "Johnnie Walker Black Label", precio: 750 },
   { id: "johnnie_walker_double_black", nombre: "Johnnie Walker Double Black", precio: 900 },
-  { id: "johnnie_walker_blue_label", nombre: "Johnnie Walker Blue Label", precio: 4000 }
+  { id: "johnnie_walker_blue_label", nombre: "Johnnie Walker Blue Label", precio: 4600 }
 ];
 
 const ventasDirectas = [
@@ -62,7 +62,7 @@ const combos = [
   { id: "combo_johnnie_walker_red_label", nombre: "Combo Johnnie Walker Red Label", base: "johnnie_walker_red_label", mix: "agua_2l", precio: 550 },
   { id: "combo_johnnie_walker_black_label", nombre: "Combo Johnnie Walker Black Label", base: "johnnie_walker_black_label", mix: "agua_2l", precio: 750 },
   { id: "combo_johnnie_walker_double_black", nombre: "Combo Johnnie Walker Double Black", base: "johnnie_walker_double_black", mix: "agua_2l", precio: 900 },
-  { id: "combo_johnnie_walker_blue_label", nombre: "Combo Johnnie Walker Blue Label", base: "johnnie_walker_blue_label", mix: "agua_2l", precio: 4000 }
+  { id: "combo_johnnie_walker_blue_label", nombre: "Combo Johnnie Walker Blue Label", base: "johnnie_walker_blue_label", mix: "agua_2l", precio: 4600 }
 ];
 function mostrarNotificacion(mensaje, tipo="ok") {
   const noti = document.getElementById("notificacion");
