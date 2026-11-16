@@ -1,4 +1,12 @@
-const STORAGE_KEY = "pacha_control_caja_v2";
+const NUMERO_CAJA = Number(
+    new URLSearchParams(window.location.search).get("caja")
+);
+
+const ES_HOJA_CAJA = [1, 2, 3, 4].includes(NUMERO_CAJA);
+
+const STORAGE_KEY = ES_HOJA_CAJA
+    ? `pacha_control_caja_v3_caja_${NUMERO_CAJA}`
+    : "pacha_control_caja_v2";
 
 const productos = [
   { id: "fernet_branca", nombre: "Fernet Branca", precio: 380 },
@@ -365,6 +373,238 @@ function descargarPDF() {
 }
 
 
+async function descargarPDFUtilizados() {
+    if (typeof window.html2pdf !== "function") {
+        alert("No se pudo cargar el generador de PDF.");
+        return;
+    }
+
+    // Asegurar que todas las hojas guarden sus últimos datos.
+    document.querySelectorAll(".iframe-caja").forEach(iframe => {
+        try {
+            iframe.contentWindow.guardarDatos();
+        } catch (error) {
+            console.warn("No se pudo guardar una caja:", error);
+        }
+    });
+
+    const cajas = [];
+
+    for (let numero = 1; numero <= 4; numero++) {
+        const guardado = localStorage.getItem(
+            `pacha_control_caja_v3_caja_${numero}`
+        );
+
+        if (!guardado) continue;
+
+        let datos;
+        try {
+            datos = JSON.parse(guardado);
+        } catch {
+            continue;
+        }
+
+        const suministros = datos?.suministros || {};
+        const utilizados = {};
+        let tieneActividad = false;
+
+        productos.forEach(producto => {
+            const registro = suministros[producto.id] || {};
+            const entregas = Array.isArray(registro.entregas)
+                ? registro.entregas
+                : [];
+
+            if (
+                entregas.some(v => String(v).trim() !== "") ||
+                String(registro.devolucion ?? "").trim() !== ""
+            ) {
+                tieneActividad = true;
+            }
+
+            const cantidadEntregada = entregas.reduce(
+                (suma, valor) => suma + numeroSeguro(valor),
+                0
+            );
+
+            const devolucion = numeroSeguro(
+                registro.devolucion
+            );
+
+            utilizados[producto.id] = Math.max(
+                0,
+                cantidadEntregada - devolucion
+            );
+        });
+
+        if (tieneActividad) {
+            cajas.push({
+                numero,
+                fecha: String(datos.header?.fecha || "").trim(),
+                utilizados
+            });
+        }
+    }
+
+    if (!cajas.length) {
+        alert("No hay cajas con productos registrados.");
+        return;
+    }
+
+    const fechas = [...new Set(
+        cajas.map(caja => caja.fecha).filter(Boolean)
+    )];
+
+    // Evitar sumar accidentalmente hojas de fechas diferentes.
+    if (fechas.length > 1) {
+        alert(
+            "Las cajas tienen fechas diferentes: " +
+            fechas.join(", ") +
+            ". Corrige las fechas antes de generar el reporte."
+        );
+        return;
+    }
+
+    const ahora = new Date();
+
+    const fecha = fechas[0] ||
+        ahora.toLocaleDateString("es-BO");
+
+    const hora = ahora.toLocaleTimeString("es-BO", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false
+    });
+
+    const escapar = valor => String(valor)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+
+    const columnas = cajas.map(caja =>
+        `<th>CAJA ${caja.numero}</th>`
+    ).join("");
+
+    const totalesCaja = cajas.map(caja =>
+        productos.reduce(
+            (suma, producto) =>
+                suma + caja.utilizados[producto.id],
+            0
+        )
+    );
+
+    const totalGeneral = totalesCaja.reduce(
+        (suma, valor) => suma + valor,
+        0
+    );
+
+    const filas = productos.map(producto => {
+        const cantidades = cajas.map(
+            caja => caja.utilizados[producto.id]
+        );
+
+        const total = cantidades.reduce(
+            (suma, valor) => suma + valor,
+            0
+        );
+
+        const columnasCajas = cantidades.map(
+            cantidad => `<td class="cantidad">${cantidad}</td>`
+        ).join("");
+
+        return `
+            <tr>
+                <td class="producto">${escapar(producto.nombre)}</td>
+                ${columnasCajas}
+                <td class="total-amarillo">${total}</td>
+            </tr>
+        `;
+    }).join("");
+
+    const filaTotales = totalesCaja.map(
+        total => `<td class="cantidad">${total}</td>`
+    ).join("");
+
+    const reporte = document.createElement("div");
+    reporte.id = "reporte-utilizados";
+    reporte.innerHTML = `
+        <div class="encabezado-utilizados">
+            <div>
+                <h1>MAMÁ POTOSÍ</h1>
+                <p>TOTAL UTILIZADO</p>
+            </div>
+
+            <div class="fecha-utilizados">
+                <div><b>FECHA:</b> ${escapar(fecha)}</div>
+                <div><b>HORA:</b> ${escapar(hora)}</div>
+            </div>
+        </div>
+
+        <table class="tabla-utilizados">
+            <thead>
+                <tr>
+                    <th>PRODUCTO</th>
+                    ${columnas}
+                    <th>TOTAL</th>
+                </tr>
+            </thead>
+
+            <tbody>
+                ${filas}
+            </tbody>
+
+            <tfoot>
+                <tr>
+                    <td class="producto">TOTAL GENERAL</td>
+                    ${filaTotales}
+                    <td class="total-amarillo">${totalGeneral}</td>
+                </tr>
+            </tfoot>
+        </table>
+    `;
+
+    document.body.appendChild(reporte);
+
+    const nombreFecha = fecha
+        .replace(/[\/\\:*?"<>|]/g, "-")
+        .replace(/\s+/g, "_");
+
+    try {
+        await window.html2pdf()
+            .set({
+                margin: [8, 7, 8, 7],
+                filename:
+                    `MAMA_POTOSI_UTILIZADOS_${nombreFecha}.pdf`,
+                image: {
+                    type: "jpeg",
+                    quality: 0.98
+                },
+                html2canvas: {
+                    scale: 2,
+                    useCORS: true,
+                    scrollY: 0
+                },
+                jsPDF: {
+                    unit: "mm",
+                    format: "a4",
+                    orientation: "portrait"
+                },
+                pagebreak: {
+                    mode: ["css", "legacy"],
+                    avoid: ["tr"]
+                }
+            })
+            .from(reporte)
+            .save();
+    } catch (error) {
+        console.error(error);
+        alert("Ocurrió un error al generar el PDF.");
+    } finally {
+        reporte.remove();
+    }
+}
+
 
 function mostrarEstadoCaja({notificar = true} = {}) {
   const plataRealInput = document.getElementById('plata-real');
@@ -398,5 +638,111 @@ function mostrarEstadoCaja({notificar = true} = {}) {
   }
 }
 
-// Inicializa la tabla
-window.onload = inicializar;
+function iniciarSistema() {
+    if (ES_HOJA_CAJA) {
+        // Esta página funciona como una caja independiente.
+        inicializar();
+
+        const barra = document.getElementById("barra");
+        if (barra && !barra.value.trim()) {
+            barra.value = "Caja " + NUMERO_CAJA;
+            guardarDatos();
+        }
+
+        // Ajustar la altura de cada hoja dentro de la página.
+        const actualizarAltura = () => {
+            const alto = Math.ceil(
+                document.documentElement.scrollHeight
+            );
+
+            window.parent.postMessage({
+                tipo: "altura-caja-mama",
+                caja: NUMERO_CAJA,
+                altura: alto
+            }, window.location.origin);
+        };
+
+        if (window.ResizeObserver) {
+            const observer = new ResizeObserver(actualizarAltura);
+            observer.observe(document.body);
+        }
+
+        window.addEventListener("load", actualizarAltura);
+        actualizarAltura();
+
+        return;
+    }
+
+    // Página principal: mostrar las 4 hojas.
+    document.body.innerHTML = `
+        <main class="sistema-cuatro-cajas">
+            <header class="panel-principal">
+                <div>
+                    <h1>MAMÁ POTOSÍ</h1>
+                    <p>CONTROL DE CAJAS Y SUMINISTROS</p>
+                </div>
+                <button
+                    class="btn-pdf-utilizados"
+                    onclick="descargarPDFUtilizados()"
+                >
+                    Descargar PDF Utilizados
+                </button>
+            </header>
+
+            <div id="contenedor-cuatro-cajas"></div>
+        </main>
+    `;
+
+    const contenedor = document.getElementById(
+        "contenedor-cuatro-cajas"
+    );
+
+    for (let numero = 1; numero <= 4; numero++) {
+        const seccion = document.createElement("section");
+        seccion.className = "seccion-caja";
+
+        const titulo = document.createElement("h2");
+        titulo.textContent = "CAJA " + numero;
+
+        const iframe = document.createElement("iframe");
+        iframe.id = "iframe-caja-" + numero;
+        iframe.title = "Hoja de Caja " + numero;
+        iframe.className = "iframe-caja";
+
+        const direccion = new URL(window.location.href);
+        direccion.searchParams.set("caja", numero);
+
+        iframe.src = direccion.href;
+
+        seccion.appendChild(titulo);
+        seccion.appendChild(iframe);
+        contenedor.appendChild(seccion);
+    }
+}
+
+window.addEventListener("message", function(evento) {
+    if (evento.origin !== window.location.origin) return;
+
+    const datos = evento.data;
+
+    if (datos?.tipo !== "altura-caja-mama") return;
+
+    const numero = Number(datos.caja);
+
+    if (![1, 2, 3, 4].includes(numero)) return;
+
+    const iframe = document.getElementById(
+        "iframe-caja-" + numero
+    );
+
+    if (!iframe || evento.source !== iframe.contentWindow) return;
+
+    const altura = Number(datos.altura);
+
+    if (Number.isFinite(altura) && altura > 0) {
+        iframe.style.height = Math.ceil(altura + 10) + "px";
+    }
+});
+
+window.onload = iniciarSistema;
+
