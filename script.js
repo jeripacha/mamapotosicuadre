@@ -97,9 +97,6 @@ function numeroSeguro(valor) {
 }
 
 function inicializar() {
-  // El catálogo anterior usaba otra estructura y no debe mezclarse con este.
-  localStorage.removeItem("pacha_vFinal_Full");
-
   const tbodyInv = document.getElementById('tabla-body');
   if(tbodyInv) {
       tbodyInv.innerHTML = productos.map(p => `<tr id="row-${p.id}">
@@ -263,8 +260,25 @@ function cargarDatos() {
   try {
       data = JSON.parse(stored);
   } catch {
-      localStorage.removeItem(STORAGE_KEY);
-      mostrarNotificacion("Los datos guardados estaban dañados y fueron reiniciados.", "faltante");
+      const claveRespaldo = `${STORAGE_KEY}_respaldo_${Date.now()}`;
+      let respaldoGuardado = false;
+      try {
+          localStorage.setItem(claveRespaldo, stored);
+          respaldoGuardado = true;
+          localStorage.removeItem(STORAGE_KEY);
+          mostrarNotificacion(
+              "Los datos no se pudieron leer. Se guardó una copia de recuperación.",
+              "faltante"
+          );
+      } catch (error) {
+          console.error("No se pudo respaldar el registro dañado:", error);
+          mostrarNotificacion(
+              respaldoGuardado
+                  ? "Se conservó una copia de recuperación de los datos dañados."
+                  : "No se creó una copia. El registro original se conservó; evita editar esta hoja.",
+              "faltante"
+          );
+      }
       return;
   }
 
@@ -374,19 +388,15 @@ function descargarPDF() {
 
 
 async function descargarPDFUtilizados() {
-    if (typeof window.html2pdf !== "function") {
-        alert("No se pudo cargar el generador de PDF.");
+    const ARCHIVO_LOGO_PDF = "350C8440-E7BF-457F-8DA3-CE39BB2AF3B6.PNG"; // Escribe aquí el nombre, por ejemplo: "logo.png"
+    const JsPDF = window.jspdf?.jsPDF;
+    if (typeof JsPDF !== "function") {
+        alert("No se pudo cargar el generador de PDF. Revisa tu conexión e inténtalo de nuevo.");
         return;
     }
 
-    // Asegurar que todas las hojas guarden sus últimos datos.
-    document.querySelectorAll(".iframe-caja").forEach(iframe => {
-        try {
-            iframe.contentWindow.guardarDatos();
-        } catch (error) {
-            console.warn("No se pudo guardar una caja:", error);
-        }
-    });
+    // Cada campo guarda sus cambios al editarse. La descarga solo lee los
+    // registros guardados y no vuelve a escribirlos ni a borrarlos.
 
     const cajas = [];
 
@@ -465,143 +475,338 @@ async function descargarPDFUtilizados() {
     }
 
     const ahora = new Date();
-
-    const fecha = fechas[0] ||
-        ahora.toLocaleDateString("es-BO");
-
+    const fecha = fechas[0] || ahora.toLocaleDateString("es-BO");
     const hora = ahora.toLocaleTimeString("es-BO", {
         hour: "2-digit",
         minute: "2-digit",
         hour12: false
     });
-
-    const escapar = valor => String(valor)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
-
-    const columnas = cajas.map(caja =>
-        `<th>CAJA ${caja.numero}</th>`
-    ).join("");
+    const dosDigitos = valor => String(valor).padStart(2, "0");
+    const selloTiempo = [
+        ahora.getFullYear(),
+        dosDigitos(ahora.getMonth() + 1),
+        dosDigitos(ahora.getDate())
+    ].join("") + "-" + [
+        dosDigitos(ahora.getHours()),
+        dosDigitos(ahora.getMinutes()),
+        dosDigitos(ahora.getSeconds())
+    ].join("");
+    const codigoAleatorio = Math.random()
+        .toString(36)
+        .slice(2, 7)
+        .toUpperCase()
+        .padEnd(5, "0");
+    const referencia = `REF-${selloTiempo}-${codigoAleatorio}`;
+    const fechaArchivo = fecha
+        .replace(/[\/\\:*?"<>|]/g, "-")
+        .replace(/\s+/g, "_");
+    const nombreArchivo =
+        `MAMA_POTOSI_UTILIZADOS_${fechaArchivo}_${referencia}.pdf`;
 
     const totalesCaja = cajas.map(caja =>
         productos.reduce(
-            (suma, producto) =>
-                suma + caja.utilizados[producto.id],
+            (suma, producto) => suma + caja.utilizados[producto.id],
             0
         )
     );
-
     const totalGeneral = totalesCaja.reduce(
         (suma, valor) => suma + valor,
         0
     );
 
-    const filas = productos.map(producto => {
-        const cantidades = cajas.map(
-            caja => caja.utilizados[producto.id]
-        );
-
-        const total = cantidades.reduce(
-            (suma, valor) => suma + valor,
-            0
-        );
-
-        const columnasCajas = cantidades.map(
-            cantidad => `<td class="cantidad">${cantidad}</td>`
-        ).join("");
-
-        return `
-            <tr>
-                <td class="producto">${escapar(producto.nombre)}</td>
-                ${columnasCajas}
-                <td class="total-amarillo">${total}</td>
-            </tr>
-        `;
-    }).join("");
-
-    const filaTotales = totalesCaja.map(
-        total => `<td class="cantidad">${total}</td>`
-    ).join("");
-
-    const reporte = document.createElement("div");
-    reporte.id = "reporte-utilizados";
-    reporte.innerHTML = `
-        <div class="encabezado-utilizados">
-            <div>
-                <h1>MAMÁ POTOSÍ</h1>
-                <p>TOTAL UTILIZADO</p>
-            </div>
-
-            <div class="fecha-utilizados">
-                <div><b>FECHA:</b> ${escapar(fecha)}</div>
-                <div><b>HORA:</b> ${escapar(hora)}</div>
-            </div>
-        </div>
-
-        <table class="tabla-utilizados">
-            <thead>
-                <tr>
-                    <th>PRODUCTO</th>
-                    ${columnas}
-                    <th>TOTAL</th>
-                </tr>
-            </thead>
-
-            <tbody>
-                ${filas}
-            </tbody>
-
-            <tfoot>
-                <tr>
-                    <td class="producto">TOTAL GENERAL</td>
-                    ${filaTotales}
-                    <td class="total-amarillo">${totalGeneral}</td>
-                </tr>
-            </tfoot>
-        </table>
-    `;
-
-    document.body.appendChild(reporte);
-
-    const nombreFecha = fecha
-        .replace(/[\/\\:*?"<>|]/g, "-")
-        .replace(/\s+/g, "_");
-
     try {
-        await window.html2pdf()
-            .set({
-                margin: [8, 7, 8, 7],
-                filename:
-                    `MAMA_POTOSI_UTILIZADOS_${nombreFecha}.pdf`,
-                image: {
-                    type: "jpeg",
-                    quality: 0.98
-                },
-                html2canvas: {
-                    scale: 2,
-                    useCORS: true,
-                    scrollY: 0
-                },
-                jsPDF: {
-                    unit: "mm",
-                    format: "a4",
-                    orientation: "portrait"
-                },
-                pagebreak: {
-                    mode: ["css", "legacy"],
-                    avoid: ["tr"]
-                }
-            })
-            .from(reporte)
-            .save();
+        let logoData = null;
+        let tipoLogo = "PNG";
+        const nombreLogo = ARCHIVO_LOGO_PDF.trim();
+
+        if (nombreLogo) {
+            const rutaLogo = nombreLogo.startsWith("/")
+                ? nombreLogo
+                : `./${nombreLogo}`;
+            const respuestaLogo = await fetch(rutaLogo);
+            if (!respuestaLogo.ok) {
+                throw new Error(`No se pudo cargar el logo: ${nombreLogo}`);
+            }
+            const archivoLogo = await respuestaLogo.blob();
+            logoData = await new Promise((resolve, reject) => {
+                const lector = new FileReader();
+                lector.onload = () => resolve(lector.result);
+                lector.onerror = () => reject(new Error("No se pudo leer el logo."));
+                lector.readAsDataURL(archivoLogo);
+            });
+            tipoLogo = /\.jpe?g$/i.test(nombreLogo) ? "JPEG" : "PNG";
+        }
+
+        const pdf = new JsPDF({
+            orientation: "portrait",
+            unit: "mm",
+            format: "a4",
+            compress: true
+        });
+        const anchoPagina = pdf.internal.pageSize.getWidth();
+        const altoPagina = pdf.internal.pageSize.getHeight();
+        const margen = 12;
+        const anchoTabla = anchoPagina - margen * 2;
+        const encabezadoTablaY = 46;
+        const altoEncabezadoTabla = 12;
+        const altoFila = 12;
+        const altoFilaTotal = 12;
+        const pieY = altoPagina - 12;
+        const espacioSeguridad = 6;
+        const filasPorPagina = Math.max(
+            1,
+            Math.floor(
+                (
+                    pieY -
+                    encabezadoTablaY -
+                    altoEncabezadoTabla -
+                    altoFilaTotal -
+                    espacioSeguridad
+                ) / altoFila
+            )
+        );
+        const cantidadPaginas = Math.max(
+            1,
+            Math.ceil(productos.length / filasPorPagina)
+        );
+
+        const anchoTotal = 24;
+        const anchoProducto = Math.max(
+            58,
+            90 - (cajas.length - 1) * 8
+        );
+        const anchoCaja =
+            (anchoTabla - anchoProducto - anchoTotal) / cajas.length;
+        const anchosColumnas = [
+            anchoProducto,
+            ...cajas.map(() => anchoCaja),
+            anchoTotal
+        ];
+        const posicionesColumnas = [];
+        let siguienteX = margen;
+        anchosColumnas.forEach(ancho => {
+            posicionesColumnas.push(siguienteX);
+            siguienteX += ancho;
+        });
+
+        const colores = {
+            texto: [35, 42, 52],
+            negro: [0, 0, 0],
+            tenue: [105, 114, 126],
+            alterno: [238, 238, 238],
+            encabezado: [0, 0, 0],
+            filaTotal: [230, 230, 230],
+            blanco: [255, 255, 255]
+        };
+
+        const dibujarEncabezado = () => {
+            if (logoData) {
+                pdf.addImage(
+                    logoData,
+                    tipoLogo,
+                    margen - 9,
+                    margen - 9,
+                    32,
+                    32
+                );
+            }
+            const desplazamientoMarca = logoData ? 18 : 0;
+            pdf.setTextColor(...colores.texto);
+            pdf.setFont("helvetica", "bold");
+            pdf.setFontSize(17);
+            pdf.text("MAMÁ POTOSÍ", margen + desplazamientoMarca, margen + 7);
+
+            pdf.setFontSize(8.5);
+            pdf.text("USO TOTAL", margen + desplazamientoMarca, margen + 18);
+
+            pdf.setFont("helvetica", "bold");
+            pdf.setFontSize(9);
+            pdf.setTextColor(...colores.negro);
+            pdf.text(`FECHA: ${fecha}`, margen + anchoTabla, margen + 6, {
+                align: "right",
+                maxWidth: 68
+            });
+            pdf.text(`HORA: ${hora}`, margen + anchoTabla, margen + 12, {
+                align: "right",
+                maxWidth: 68
+            });
+
+            pdf.setFont("helvetica", "bold");
+            pdf.setFontSize(7.5);
+            pdf.text(`REFERENCIA: ${referencia}`, margen + anchoTabla, margen + 19, {
+                align: "right",
+                maxWidth: 68
+            });
+
+        };
+
+        const dibujarCabeceraTabla = () => {
+            pdf.setFillColor(...colores.encabezado);
+            pdf.rect(
+                margen,
+                encabezadoTablaY,
+                anchoTabla,
+                altoEncabezadoTabla,
+                "F"
+            );
+            pdf.setTextColor(...colores.blanco);
+            pdf.setFont("helvetica", "bold");
+            pdf.setFontSize(11);
+            const lineaBase =
+                encabezadoTablaY + altoEncabezadoTabla / 2 + 2;
+
+            pdf.text(
+                "PRODUCTO",
+                posicionesColumnas[0] + anchoProducto / 2,
+                lineaBase,
+                { align: "center" }
+            );
+            cajas.forEach((caja, indice) => {
+                pdf.text(
+                    `CAJA ${caja.numero}`,
+                    posicionesColumnas[indice + 1] + anchoCaja / 2,
+                    lineaBase,
+                    { align: "center" }
+                );
+            });
+            pdf.text(
+                "TOTAL",
+                posicionesColumnas[posicionesColumnas.length - 1] +
+                    anchoTotal / 2,
+                lineaBase,
+                { align: "center" }
+            );
+        };
+
+        const dibujarPie = pagina => {
+            pdf.setTextColor(...colores.tenue);
+            pdf.setFont("helvetica", "normal");
+            pdf.setFontSize(8);
+            pdf.text(`REFERENCIA: ${referencia}`, margen, pieY);
+            pdf.text(
+                `PÁGINA ${pagina} DE ${cantidadPaginas}`,
+                anchoPagina - margen,
+                pieY,
+                { align: "right" }
+            );
+        };
+
+        pdf.setProperties({
+            title: "Uso total - Mamá Potosí",
+            subject: `Reporte ${referencia}`,
+            author: "Mamá Potosí",
+            creator: "Control de cajas y suministros"
+        });
+
+        for (let pagina = 0; pagina < cantidadPaginas; pagina++) {
+            if (pagina > 0) pdf.addPage();
+            dibujarEncabezado();
+            dibujarCabeceraTabla();
+
+            const inicio = pagina * filasPorPagina;
+            const productosPagina = productos.slice(
+                inicio,
+                inicio + filasPorPagina
+            );
+            const filaTextoOffset = altoFila / 2 + 2;
+
+            productosPagina.forEach((producto, indiceFila) => {
+                const indiceProducto = inicio + indiceFila;
+                const y = encabezadoTablaY +
+                    altoEncabezadoTabla +
+                    indiceFila * altoFila;
+                const totalProducto = cajas.reduce(
+                    (suma, caja) => suma + caja.utilizados[producto.id],
+                    0
+                );
+
+                pdf.setFillColor(
+                    ...(indiceProducto % 2 === 0
+                        ? colores.blanco
+                        : colores.alterno)
+                );
+                pdf.rect(margen, y, anchoTabla, altoFila, "F");
+
+                pdf.setTextColor(...colores.texto);
+                pdf.setFont("helvetica", "normal");
+                pdf.setFontSize(10.5);
+                pdf.text(
+                    producto.nombre,
+                    posicionesColumnas[0] + anchoProducto / 2,
+                    y + filaTextoOffset,
+                    {
+                        align: "center",
+                        maxWidth: anchoProducto - 6
+                    }
+                );
+
+                pdf.setFont("helvetica", "bold");
+                pdf.setFontSize(14);
+                cajas.forEach((caja, indiceCaja) => {
+                    pdf.text(
+                        String(caja.utilizados[producto.id]),
+                        posicionesColumnas[indiceCaja + 1] + anchoCaja / 2,
+                        y + filaTextoOffset,
+                        { align: "center" }
+                    );
+                });
+                pdf.text(
+                    String(totalProducto),
+                    posicionesColumnas[posicionesColumnas.length - 1] +
+                        anchoTotal / 2,
+                    y + filaTextoOffset,
+                    { align: "center" }
+                );
+            });
+
+            let tablaFinY = encabezadoTablaY +
+                altoEncabezadoTabla +
+                productosPagina.length * altoFila;
+
+            if (pagina === cantidadPaginas - 1) {
+                pdf.setFillColor(...colores.filaTotal);
+                pdf.rect(
+                    margen,
+                    tablaFinY,
+                    anchoTabla,
+                    altoFilaTotal,
+                    "F"
+                );
+
+                pdf.setTextColor(...colores.texto);
+                pdf.setFont("helvetica", "bold");
+                pdf.setFontSize(14);
+                pdf.text(
+                    "TOTAL GENERAL",
+                    posicionesColumnas[0] + anchoProducto / 2,
+                    tablaFinY + altoFilaTotal / 2 + 2,
+                    { align: "center" }
+                );
+                totalesCaja.forEach((total, indiceCaja) => {
+                    pdf.text(
+                        String(total),
+                        posicionesColumnas[indiceCaja + 1] + anchoCaja / 2,
+                        tablaFinY + altoFilaTotal / 2 + 2,
+                        { align: "center" }
+                    );
+                });
+                pdf.text(
+                    String(totalGeneral),
+                    posicionesColumnas[posicionesColumnas.length - 1] +
+                        anchoTotal / 2,
+                    tablaFinY + altoFilaTotal / 2 + 2,
+                    { align: "center" }
+                );
+                tablaFinY += altoFilaTotal;
+            }
+
+            dibujarPie(pagina + 1);
+        }
+
+        pdf.save(nombreArchivo);
     } catch (error) {
         console.error(error);
-        alert("Ocurrió un error al generar el PDF.");
-    } finally {
-        reporte.remove();
+        alert("Ocurrió un error al generar el PDF. Inténtalo nuevamente.");
     }
 }
 
