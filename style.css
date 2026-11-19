@@ -373,7 +373,23 @@
     border: 1px solid #ddd;
     border-radius: 10px;
 }
+#reporte-utilizados {
+    width: 190mm;
+    box-sizing: border-box;
+    padding: 3mm;
+    background: #ffffff;
+    color: #111111;
+    font-family: Arial, sans-serif;
 
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 99999;
+
+    display: block;
+    visibility: visible;
+    opacity: 1;
+}
 .seccion-caja h2 {
     background: #222;
     color: white;
@@ -394,19 +410,6 @@
 /* =====================================
    PDF DE UTILIZADOS
    ===================================== */
-
-#reporte-utilizados {
-    width: 190mm;
-    box-sizing: border-box;
-    padding: 3mm;
-    background: white;
-    color: #111;
-    font-family: Arial, sans-serif;
-    position: absolute;
-    left: 0;
-    top: 0;
-    z-index: -1;
-}
 
 #reporte-utilizados .encabezado-utilizados {
     display: flex;
@@ -537,4 +540,30 @@
         width: 100%;
     }
 }
+/* Corrección exclusiva para el PDF de utilizados */
 
+#reporte-utilizados .tabla-utilizados {
+    display: table !important;
+    width: 100% !important;
+    overflow: visible !important;
+    white-space: normal !important;
+}
+
+#reporte-utilizados .tabla-utilizados tr {
+    display: table-row !important;
+}
+
+#reporte-utilizados .tabla-utilizados th,
+#reporte-utilizados .tabla-utilizados td {
+    display: table-cell !important;
+}
+
+#reporte-utilizados .encabezado-utilizados h1 {
+    font-size: 25px !important;
+    letter-spacing: 0 !important;
+}
+
+#reporte-utilizados .total-amarillo {
+    background-color: #FFE66D !important;
+    color: #111111 !important;
+}
