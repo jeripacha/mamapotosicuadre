@@ -7,6 +7,10 @@ const ES_HOJA_CAJA = [1, 2, 3, 4].includes(NUMERO_CAJA);
 const STORAGE_KEY = ES_HOJA_CAJA
     ? `pacha_control_caja_v3_caja_${NUMERO_CAJA}`
     : "pacha_control_caja_v2";
+const CONSUMOS_STORAGE_KEY = "pacha_control_caja4_consumos_v1";
+let registroCajaDanado = false;
+let consumosCaja4Danados = false;
+let avisoAlmacenamientoMostrado = false;
 
 const productos = [
   { id: "fernet_branca", nombre: "Fernet Branca", precio: 380 },
@@ -215,6 +219,8 @@ function calcular() {
 }
 
 function guardarDatos() {
+  if (registroCajaDanado) return;
+
   const cajeroInput = document.getElementById('cajero');
   const barraInput = document.getElementById('barra');
   const fechaInput = document.getElementById('fecha');
@@ -249,7 +255,26 @@ function guardarDatos() {
       if(input) data.ventasDirectas[v.id] = input.value;
   });
 
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      const estado = document.getElementById("estado-guardado");
+      if (estado) {
+          estado.textContent = "Cambios guardados automáticamente";
+          estado.classList.remove("error");
+      }
+      avisoAlmacenamientoMostrado = false;
+  } catch (error) {
+      console.error("No se pudieron guardar los datos de esta caja:", error);
+      const estado = document.getElementById("estado-guardado");
+      if (estado) {
+          estado.textContent = "No se pudo guardar. Revisa el almacenamiento del navegador.";
+          estado.classList.add("error");
+      }
+      if (!avisoAlmacenamientoMostrado) {
+          mostrarNotificacion("No se pudieron guardar los cambios en este dispositivo.", "faltante");
+          avisoAlmacenamientoMostrado = true;
+      }
+  }
 }
 
 function cargarDatos() {
@@ -261,24 +286,16 @@ function cargarDatos() {
       data = JSON.parse(stored);
   } catch {
       const claveRespaldo = `${STORAGE_KEY}_respaldo_${Date.now()}`;
-      let respaldoGuardado = false;
       try {
           localStorage.setItem(claveRespaldo, stored);
-          respaldoGuardado = true;
-          localStorage.removeItem(STORAGE_KEY);
-          mostrarNotificacion(
-              "Los datos no se pudieron leer. Se guardó una copia de recuperación.",
-              "faltante"
-          );
       } catch (error) {
           console.error("No se pudo respaldar el registro dañado:", error);
-          mostrarNotificacion(
-              respaldoGuardado
-                  ? "Se conservó una copia de recuperación de los datos dañados."
-                  : "No se creó una copia. El registro original se conservó; evita editar esta hoja.",
-              "faltante"
-          );
       }
+      registroCajaDanado = true;
+      mostrarNotificacion(
+          "No se pudo leer el registro. Se conservó; usa Limpiar solo si deseas borrarlo.",
+          "faltante"
+      );
       return;
   }
 
@@ -320,7 +337,6 @@ function cargarDatos() {
       }
   });
 
-
   const descuentoInput = document.getElementById('descuento');
   if(descuentoInput && caja.descuento !== undefined)
       descuentoInput.value = caja.descuento;
@@ -342,13 +358,60 @@ function borrarTodo() {
 
   // Limpiar localStorage
   localStorage.removeItem(STORAGE_KEY);
+  registroCajaDanado = false;
   calcular();
+  const estado = document.getElementById("estado-guardado");
+  if (estado) {
+      estado.textContent = "Hoja limpia. Los cambios se guardarán automáticamente.";
+      estado.classList.remove("error");
+  }
   mostrarNotificacion("Control de caja limpiado.", "info");
 }
-function descargarPDF() {
+
+function dibujarCeldaPDF(pdf, x, y, ancho, alto, texto, opciones = {}) {
+  const {
+      fondo = [255, 255, 255],
+      color = [20, 20, 20],
+      tamano = 7,
+      negrita = false,
+      alineacion = "center"
+  } = opciones;
+
+  pdf.setFillColor(...fondo);
+  pdf.setDrawColor(20, 20, 20);
+  pdf.setLineWidth(0.35);
+  pdf.rect(x, y, ancho, alto, "FD");
+
+  const contenido = String(texto ?? "").replace(/\s+/g, " ").trim();
+  if (!contenido) return;
+
+  pdf.setFont("helvetica", negrita ? "bold" : "normal");
+  let tamanoAjustado = tamano;
+  pdf.setFontSize(tamanoAjustado);
+  while (
+      pdf.getTextWidth(contenido) > ancho - 6 &&
+      tamanoAjustado > 4.5
+  ) {
+      tamanoAjustado = Math.max(4.5, tamanoAjustado - 0.25);
+      pdf.setFontSize(tamanoAjustado);
+  }
+  pdf.setTextColor(...color);
+  pdf.text(
+      contenido,
+      alineacion === "left" ? x + 3 : alineacion === "right" ? x + ancho - 3 : x + ancho / 2,
+      y + alto / 2 + tamanoAjustado * 0.34,
+      {
+          align: alineacion,
+          maxWidth: ancho - 6
+      }
+  );
+}
+
+async function descargarPDF() {
   const element = document.getElementById('documento');
   if (!element) return;
-  if (typeof window.html2pdf !== "function") {
+  const JsPDF = window.jspdf?.jsPDF;
+  if (typeof JsPDF !== "function") {
       mostrarNotificacion("No cargó el generador PDF. Revisa la conexión e inténtalo de nuevo.", "faltante");
       return;
   }
@@ -367,36 +430,456 @@ function descargarPDF() {
   const partes = ["caja", limpiar(barra), limpiar(fecha)].filter(Boolean);
   const nombreArchivo = partes.join("_") + ".pdf";
 
-  const opt = {
-      margin: 0,
-      filename: nombreArchivo,
-      image: { type: 'jpeg', quality: 1 },
-      html2canvas: {
-          scale: 2,
-          scrollY: 0,
-          useCORS: true
-      },
-      jsPDF: {
-          unit: 'mm',
-          format: 'a4',
-          orientation: 'portrait'
-      }
-  };
+  try {
+      const pdf = new JsPDF({
+          orientation: "portrait",
+          unit: "pt",
+          format: "letter",
+          compress: true
+      });
+      const anchoPagina = pdf.internal.pageSize.getWidth();
+      const altoPagina = pdf.internal.pageSize.getHeight();
+      const margen = 18;
+      const anchoContenido = anchoPagina - margen * 2;
+      const separacion = 12;
+      const anchoIzquierdo = 268;
+      const anchoDerecho = anchoContenido - anchoIzquierdo - separacion;
+      const inicioY = 68;
+      const altoCabecera = 18;
+      const altoPie = 18;
+      const espacioEntreTablas = 8;
+      const filasInventario = Array.from(
+          document.querySelectorAll("#tabla-body > tr")
+      );
+      const filasVentas = Array.from(
+          document.querySelectorAll("#ventas-directas-body > tr")
+      );
+      const filasResumen = Array.from(
+          document.querySelectorAll("#resumen-body > tr")
+      );
+      const filasTotales = Array.from(
+          document.querySelectorAll(".res-table tfoot > tr")
+      );
+      const altoDisponibleIzquierda =
+          altoPagina - margen - inicioY -
+          altoCabecera * 2 - espacioEntreTablas;
+      const altoDisponibleDerecha =
+          altoPagina - margen - inicioY -
+          altoCabecera - filasTotales.length * altoPie;
+      const altoFila = Math.max(
+          6,
+          Math.min(
+              15.5,
+              altoDisponibleIzquierda /
+                  Math.max(1, filasInventario.length + filasVentas.length),
+              altoDisponibleDerecha / Math.max(1, filasResumen.length)
+          )
+      );
+      const tamanoTexto = Math.min(8, Math.max(6.5, altoFila - 5));
+      const tamanoCabecera = 7.5;
+      const xIzquierda = margen;
+      const xDerecha = margen + anchoIzquierdo + separacion;
+      const normalizar = elemento =>
+          String(elemento?.textContent || "").replace(/\s+/g, " ").trim();
 
-  window.html2pdf().set(opt).from(element).save();
+      pdf.setProperties({
+          title: "Control de Caja - Mamá Potosí",
+          author: "Mamá Potosí",
+          creator: "Control de cajas y suministros"
+      });
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(15);
+      pdf.setTextColor(15, 15, 15);
+      pdf.text("MAMA POTOSI", anchoPagina / 2, 23, { align: "center" });
+      pdf.setFontSize(8);
+      pdf.text(
+          "CONTROL DE CAJA Y SUMINISTROS",
+          anchoPagina / 2,
+          35,
+          { align: "center" }
+      );
+
+      const dibujarCampo = (etiqueta, valor, x, ancho) => {
+          pdf.setFont("helvetica", "bold");
+          pdf.setFontSize(9.5);
+          pdf.setTextColor(15, 15, 15);
+          pdf.text(etiqueta, x, 55);
+          const inicioValor = x + pdf.getTextWidth(etiqueta) + 5;
+          pdf.setFont("helvetica", "bold");
+          const textoValor = String(valor || "");
+          if (textoValor) {
+              const anchoValor = Math.max(10, x + ancho - inicioValor);
+              let tamanoValor = 11;
+              pdf.setFontSize(tamanoValor);
+              while (pdf.getTextWidth(textoValor) > anchoValor && tamanoValor > 9) {
+                  tamanoValor = Math.max(9, tamanoValor - 0.25);
+                  pdf.setFontSize(tamanoValor);
+              }
+              pdf.text(textoValor, inicioValor, 55, { maxWidth: anchoValor });
+          }
+          pdf.setDrawColor(20, 20, 20);
+          pdf.setLineWidth(0.5);
+          pdf.line(inicioValor, 60, x + ancho, 60);
+      };
+
+      dibujarCampo(
+          "CAJERO:",
+          document.getElementById("cajero")?.value,
+          margen + 6,
+          170
+      );
+      dibujarCampo(
+          "BARRA:",
+          document.getElementById("barra")?.value,
+          margen + 193,
+          170
+      );
+      dibujarCampo(
+          "FECHA:",
+          document.getElementById("fecha")?.value,
+          margen + 380,
+          190
+      );
+
+      const inventarioAnchos = [108, 22, 22, 22, 22, 22, 25, 25];
+      let inventarioX = xIzquierda;
+      dibujarCeldaPDF(
+          pdf, inventarioX, inicioY, inventarioAnchos[0], altoCabecera,
+          "PRODUCTO", { fondo: [235, 235, 235], tamano: tamanoCabecera, negrita: true }
+      );
+      inventarioX += inventarioAnchos[0];
+      dibujarCeldaPDF(
+          pdf, inventarioX, inicioY,
+          inventarioAnchos.slice(1, 6).reduce((a, b) => a + b, 0),
+          altoCabecera, "ENTREGAS",
+          { fondo: [235, 235, 235], tamano: tamanoCabecera, negrita: true }
+      );
+      inventarioX += inventarioAnchos.slice(1, 6).reduce((a, b) => a + b, 0);
+      dibujarCeldaPDF(
+          pdf, inventarioX, inicioY, inventarioAnchos[6], altoCabecera,
+          "DEV.", { fondo: [235, 235, 235], tamano: tamanoCabecera, negrita: true }
+      );
+      inventarioX += inventarioAnchos[6];
+      dibujarCeldaPDF(
+          pdf, inventarioX, inicioY, inventarioAnchos[7], altoCabecera,
+          "UTI.", { fondo: [235, 235, 235], tamano: tamanoCabecera, negrita: true }
+      );
+
+      filasInventario.forEach((fila, indice) => {
+          const y = inicioY + altoCabecera + indice * altoFila;
+          const valores = [
+              normalizar(fila.querySelector(".prod-col")),
+              ...Array.from(fila.querySelectorAll(".input-entrega"))
+                  .map(input => input.value),
+              fila.querySelector(".input-dev")?.value || "",
+              normalizar(fila.querySelector(".td-uti"))
+          ];
+          let x = xIzquierda;
+          valores.forEach((valor, columna) => {
+              dibujarCeldaPDF(
+                  pdf, x, y, inventarioAnchos[columna], altoFila, valor,
+                  {
+                      tamano: tamanoTexto,
+                      alineacion: columna === 0 ? "left" : "center"
+                  }
+              );
+              x += inventarioAnchos[columna];
+          });
+      });
+
+      const ventasY = inicioY + altoCabecera +
+          filasInventario.length * altoFila + espacioEntreTablas;
+      const ventasAnchos = [124, 42, 45, 57];
+      let ventasX = xIzquierda;
+      ["VENTAS DIRECTAS", "PRECIO", "CANT.", "TOTAL"].forEach((titulo, indice) => {
+          dibujarCeldaPDF(
+              pdf, ventasX, ventasY, ventasAnchos[indice], altoCabecera,
+              titulo,
+              { fondo: [235, 235, 235], tamano: tamanoCabecera, negrita: true }
+          );
+          ventasX += ventasAnchos[indice];
+      });
+      filasVentas.forEach((fila, indice) => {
+          const celdas = fila.querySelectorAll("td");
+          const y = ventasY + altoCabecera + indice * altoFila;
+          const valores = [
+              normalizar(celdas[0]),
+              normalizar(celdas[1]),
+              fila.querySelector("input")?.value || "",
+              normalizar(celdas[3])
+          ];
+          let x = xIzquierda;
+          valores.forEach((valor, columna) => {
+              dibujarCeldaPDF(
+                  pdf, x, y, ventasAnchos[columna], altoFila, valor,
+                  { tamano: tamanoTexto, alineacion: columna === 0 ? "left" : "center" }
+              );
+              x += ventasAnchos[columna];
+          });
+      });
+
+      const resumenAnchos = [148, 44, 48, anchoDerecho - 240];
+      let resumenX = xDerecha;
+      ["DETALLE VENTAS (COMBOS Y OTROS)", "CANT.", "PRECIO", "SUBTOTAL"]
+          .forEach((titulo, indice) => {
+              dibujarCeldaPDF(
+                  pdf, resumenX, inicioY, resumenAnchos[indice], altoCabecera,
+                  titulo,
+                  {
+                      fondo: [235, 235, 235],
+                      tamano: indice === 0 ? 6.5 : tamanoCabecera,
+                      negrita: true
+                  }
+              );
+              resumenX += resumenAnchos[indice];
+          });
+
+      filasResumen.forEach((fila, indice) => {
+          const y = inicioY + altoCabecera + indice * altoFila;
+          const valores = Array.from(fila.querySelectorAll("td"))
+              .map(celda => normalizar(celda));
+          let x = xDerecha;
+          valores.forEach((valor, columna) => {
+              dibujarCeldaPDF(
+                  pdf, x, y, resumenAnchos[columna], altoFila, valor,
+                  {
+                      tamano: tamanoTexto,
+                      alineacion: columna === 0 ? "left" : "center"
+                  }
+              );
+              x += resumenAnchos[columna];
+          });
+      });
+
+      const totalesY = inicioY + altoCabecera +
+          filasResumen.length * altoFila;
+      filasTotales.forEach((fila, indice) => {
+          const y = totalesY + indice * altoPie;
+          const etiqueta = normalizar(fila.querySelector(".total-etiqueta"));
+          const entrada = fila.querySelector("input");
+          const valor = entrada
+              ? entrada.value
+              : normalizar(fila.querySelector("#gran-total, #estado-caja"));
+          const estadoNormalizado = valor.toUpperCase();
+          const esEstado = indice === filasTotales.length - 1;
+          const colorEstado = estadoNormalizado.includes("FALTANTE")
+              ? { texto: [183, 28, 28], fondo: [255, 235, 238] }
+              : estadoNormalizado.includes("SOBRANTE")
+                  ? { texto: [173, 95, 0], fondo: [255, 243, 224] }
+                  : estadoNormalizado.includes("CUADRA")
+                      ? { texto: [27, 94, 32], fondo: [232, 245, 233] }
+                      : { texto: [30, 30, 30], fondo: [245, 245, 245] };
+          dibujarCeldaPDF(
+              pdf, xDerecha, y,
+              resumenAnchos[0] + resumenAnchos[1], altoPie, etiqueta,
+              {
+                  fondo: esEstado ? colorEstado.fondo : indice === 2 ? [235, 235, 235] : [255, 253, 231],
+                  tamano: esEstado ? 10.5 : 10,
+                  negrita: true,
+                  alineacion: "right"
+              }
+          );
+          dibujarCeldaPDF(
+              pdf,
+              xDerecha + resumenAnchos[0] + resumenAnchos[1],
+              y,
+              resumenAnchos[2] + resumenAnchos[3],
+              altoPie,
+              valor.replace(/✔/g, "OK"),
+              {
+                  fondo: esEstado ? colorEstado.fondo : indice === 2 ? [245, 245, 245] : [255, 253, 231],
+                  color: esEstado ? colorEstado.texto : [20, 20, 20],
+                  tamano: esEstado || indice === 2 ? 11.5 : 10.5,
+                  negrita: true
+              }
+          );
+      });
+
+      pdf.save(nombreArchivo);
+  } catch (error) {
+      console.error("No se pudo generar el PDF de la caja:", error);
+      mostrarNotificacion("No se pudo generar el PDF. Inténtalo nuevamente.", "faltante");
+  }
+}
+
+function crearHojaConsumosCaja4() {
+    const hoja = document.createElement("section");
+    hoja.className = "hoja-consumos-caja4";
+    hoja.id = "hoja-consumos-caja4";
+    hoja.innerHTML = `
+        <div class="encabezado-consumos">
+            <div>
+                <h2>CONSUMO DE BARTENDER Y MESAS</h2>
+                <p>Ingresa la cantidad total utilizada de cada producto.</p>
+            </div>
+            <button class="btn-borrar-consumos" type="button" onclick="limpiarConsumosCaja4()">
+                Limpiar
+            </button>
+        </div>
+        <div class="tablas-consumos">
+            ${crearTablaConsumos("bartender", "BARTENDER")}
+            ${crearTablaConsumos("mesas", "MESAS")}
+        </div>
+        <p class="estado-consumos" id="estado-consumos" aria-live="polite">
+            Las cantidades se guardan automáticamente en este dispositivo.
+        </p>
+    `;
+    return hoja;
+}
+
+function crearTablaConsumos(tipo, titulo) {
+    const filas = productos.map(producto => `
+        <tr>
+            <td class="consumo-producto">${producto.nombre}</td>
+            <td>
+                <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    inputmode="numeric"
+                    class="consumo-cantidad"
+                    data-tipo="${tipo}"
+                    data-producto="${producto.id}"
+                    aria-label="Cantidad de ${producto.nombre} usada por ${titulo.toLowerCase()}"
+                    oninput="manejarCambioConsumoCaja4(this)"
+                >
+            </td>
+        </tr>
+    `).join("");
+
+    return `
+        <div class="tabla-consumos-wrap">
+            <h3>${titulo}</h3>
+            <table class="tabla-consumos">
+                <thead>
+                    <tr>
+                        <th>PRODUCTO</th>
+                        <th>TOTAL</th>
+                    </tr>
+                </thead>
+                <tbody>${filas}</tbody>
+            </table>
+        </div>
+    `;
+}
+
+function guardarConsumosCaja4() {
+    if (consumosCaja4Danados) return;
+    const hoja = document.getElementById("hoja-consumos-caja4");
+    if (!hoja) return;
+
+    const datos = { bartender: {}, mesas: {} };
+    hoja.querySelectorAll(".consumo-cantidad").forEach(input => {
+        const tipo = input.dataset.tipo;
+        const producto = input.dataset.producto;
+        if (datos[tipo] && producto) datos[tipo][producto] = input.value;
+    });
+
+    try {
+        localStorage.setItem(CONSUMOS_STORAGE_KEY, JSON.stringify(datos));
+        const estado = document.getElementById("estado-consumos");
+        if (estado) {
+            estado.textContent = "Cambios guardados automáticamente.";
+            estado.classList.remove("error");
+        }
+    } catch (error) {
+        console.error("No se pudieron guardar los consumos de Caja 4:", error);
+        const estado = document.getElementById("estado-consumos");
+        if (estado) {
+            estado.textContent = "No se pudo guardar. Revisa el almacenamiento del navegador.";
+            estado.classList.add("error");
+        }
+    }
+}
+
+function cargarConsumosCaja4() {
+    const almacenado = localStorage.getItem(CONSUMOS_STORAGE_KEY);
+    if (!almacenado) return;
+
+    let datos;
+    try {
+        datos = JSON.parse(almacenado);
+    } catch (error) {
+        console.error("No se pudieron leer los consumos de Caja 4:", error);
+        consumosCaja4Danados = true;
+        const estado = document.getElementById("estado-consumos");
+        if (estado) {
+            estado.textContent = "Registro ilegible conservado. Pulsa Limpiar solo si deseas borrarlo.";
+            estado.classList.add("error");
+        }
+        return;
+    }
+
+    ["bartender", "mesas"].forEach(tipo => {
+        const cantidades = datos?.[tipo] || {};
+        Object.entries(cantidades).forEach(([producto, cantidad]) => {
+            const input = document.querySelector(
+                `.consumo-cantidad[data-tipo="${tipo}"][data-producto="${producto}"]`
+            );
+            if (input) input.value = cantidad;
+        });
+    });
+}
+
+function manejarCambioConsumoCaja4() {
+    guardarConsumosCaja4();
+}
+
+function limpiarConsumosCaja4() {
+    if (!window.confirm("¿Quieres borrar las cantidades de Bartender y Mesas?")) return;
+    document.querySelectorAll(".consumo-cantidad").forEach(input => {
+        input.value = "";
+    });
+    localStorage.removeItem(CONSUMOS_STORAGE_KEY);
+    consumosCaja4Danados = false;
+    const estado = document.getElementById("estado-consumos");
+    if (estado) {
+        estado.textContent = "Hoja limpia. Los cambios se guardarán automáticamente.";
+        estado.classList.remove("error");
+    }
 }
 
 
+async function cargarLogoPDF() {
+    const respuesta = await fetch("/350C8440-E7BF-457F-8DA3-CE39BB2AF3B6.PNG", {
+        cache: "force-cache"
+    });
+    if (!respuesta.ok) {
+        throw new Error("No se pudo cargar el logo de Mamá Potosí.");
+    }
+
+    const archivo = await respuesta.blob();
+    return new Promise((resolve, reject) => {
+        const lector = new FileReader();
+        lector.onload = () => resolve(lector.result);
+        lector.onerror = () => reject(new Error("No se pudo leer el logo."));
+        lector.readAsDataURL(archivo);
+    });
+}
+
 async function descargarPDFUtilizados() {
-    const ARCHIVO_LOGO_PDF = "350C8440-E7BF-457F-8DA3-CE39BB2AF3B6.PNG"; // Escribe aquí el nombre, por ejemplo: "logo.png"
     const JsPDF = window.jspdf?.jsPDF;
     if (typeof JsPDF !== "function") {
         alert("No se pudo cargar el generador de PDF. Revisa tu conexión e inténtalo de nuevo.");
         return;
     }
 
-    // Cada campo guarda sus cambios al editarse. La descarga solo lee los
-    // registros guardados y no vuelve a escribirlos ni a borrarlos.
+    let consumosGuardados = { bartender: {}, mesas: {} };
+    const consumoAlmacenado = localStorage.getItem(CONSUMOS_STORAGE_KEY);
+    if (consumoAlmacenado) {
+        try {
+            const leido = JSON.parse(consumoAlmacenado);
+            consumosGuardados = {
+                bartender: leido?.bartender || {},
+                mesas: leido?.mesas || {}
+            };
+        } catch (error) {
+            console.error("El registro de consumos no se pudo leer:", error);
+            alert("El registro de consumos no se pudo leer. Se conservó sin cambios y no se generó un PDF incompleto.");
+            return;
+        }
+    }
 
     const cajas = [];
 
@@ -404,14 +887,15 @@ async function descargarPDFUtilizados() {
         const guardado = localStorage.getItem(
             `pacha_control_caja_v3_caja_${numero}`
         );
-
         if (!guardado) continue;
 
         let datos;
         try {
             datos = JSON.parse(guardado);
-        } catch {
-            continue;
+        } catch (error) {
+            console.error(`El registro de Caja ${numero} no se pudo leer:`, error);
+            alert(`El registro de Caja ${numero} no se pudo leer. Se conservó sin cambios y no se generó un PDF incompleto.`);
+            return;
         }
 
         const suministros = datos?.suministros || {};
@@ -423,9 +907,8 @@ async function descargarPDFUtilizados() {
             const entregas = Array.isArray(registro.entregas)
                 ? registro.entregas
                 : [];
-
             if (
-                entregas.some(v => String(v).trim() !== "") ||
+                entregas.some(valor => String(valor).trim() !== "") ||
                 String(registro.devolucion ?? "").trim() !== ""
             ) {
                 tieneActividad = true;
@@ -435,36 +918,35 @@ async function descargarPDFUtilizados() {
                 (suma, valor) => suma + numeroSeguro(valor),
                 0
             );
-
-            const devolucion = numeroSeguro(
-                registro.devolucion
-            );
-
             utilizados[producto.id] = Math.max(
                 0,
-                cantidadEntregada - devolucion
+                cantidadEntregada - numeroSeguro(registro.devolucion)
             );
         });
 
         if (tieneActividad) {
             cajas.push({
-                numero,
                 fecha: String(datos.header?.fecha || "").trim(),
                 utilizados
             });
         }
     }
 
-    if (!cajas.length) {
-        alert("No hay cajas con productos registrados.");
+    const cantidadDeConsumo = (tipo, id) =>
+        Math.max(0, numeroSeguro(consumosGuardados?.[tipo]?.[id]));
+    const tieneConsumosExtra = productos.some(producto =>
+        cantidadDeConsumo("bartender", producto.id) > 0 ||
+        cantidadDeConsumo("mesas", producto.id) > 0
+    );
+
+    if (!cajas.length && !tieneConsumosExtra) {
+        alert("Todavía no hay cantidades registradas para generar el PDF.");
         return;
     }
 
     const fechas = [...new Set(
         cajas.map(caja => caja.fecha).filter(Boolean)
     )];
-
-    // Evitar sumar accidentalmente hojas de fechas diferentes.
     if (fechas.length > 1) {
         alert(
             "Las cajas tienen fechas diferentes: " +
@@ -482,61 +964,29 @@ async function descargarPDFUtilizados() {
         hour12: false
     });
     const dosDigitos = valor => String(valor).padStart(2, "0");
-    const selloTiempo = [
+    const selloFecha = [
         ahora.getFullYear(),
         dosDigitos(ahora.getMonth() + 1),
         dosDigitos(ahora.getDate())
-    ].join("") + "-" + [
+    ].join("");
+    const selloHora = [
         dosDigitos(ahora.getHours()),
         dosDigitos(ahora.getMinutes()),
         dosDigitos(ahora.getSeconds())
     ].join("");
-    const codigoAleatorio = Math.random()
+    const codigoReferencia = Math.random()
         .toString(36)
         .slice(2, 7)
         .toUpperCase()
         .padEnd(5, "0");
-    const referencia = `REF-${selloTiempo}-${codigoAleatorio}`;
+    const referencia = `REF-${selloFecha}-${selloHora}-${codigoReferencia}`;
     const fechaArchivo = fecha
         .replace(/[\/\\:*?"<>|]/g, "-")
         .replace(/\s+/g, "_");
-    const nombreArchivo =
-        `MAMA_POTOSI_UTILIZADOS_${fechaArchivo}_${referencia}.pdf`;
-
-    const totalesCaja = cajas.map(caja =>
-        productos.reduce(
-            (suma, producto) => suma + caja.utilizados[producto.id],
-            0
-        )
-    );
-    const totalGeneral = totalesCaja.reduce(
-        (suma, valor) => suma + valor,
-        0
-    );
+    const nombreArchivo = `MAMA_POTOSI_UTILIZADOS_${fechaArchivo}_${referencia}.pdf`;
 
     try {
-        let logoData = null;
-        let tipoLogo = "PNG";
-        const nombreLogo = ARCHIVO_LOGO_PDF.trim();
-
-        if (nombreLogo) {
-            const rutaLogo = nombreLogo.startsWith("/")
-                ? nombreLogo
-                : `./${nombreLogo}`;
-            const respuestaLogo = await fetch(rutaLogo);
-            if (!respuestaLogo.ok) {
-                throw new Error(`No se pudo cargar el logo: ${nombreLogo}`);
-            }
-            const archivoLogo = await respuestaLogo.blob();
-            logoData = await new Promise((resolve, reject) => {
-                const lector = new FileReader();
-                lector.onload = () => resolve(lector.result);
-                lector.onerror = () => reject(new Error("No se pudo leer el logo."));
-                lector.readAsDataURL(archivoLogo);
-            });
-            tipoLogo = /\.jpe?g$/i.test(nombreLogo) ? "JPEG" : "PNG";
-        }
-
+        const logo = await cargarLogoPDF();
         const pdf = new JsPDF({
             orientation: "portrait",
             unit: "mm",
@@ -547,266 +997,153 @@ async function descargarPDFUtilizados() {
         const altoPagina = pdf.internal.pageSize.getHeight();
         const margen = 12;
         const anchoTabla = anchoPagina - margen * 2;
-        const encabezadoTablaY = 46;
-        const altoEncabezadoTabla = 12;
+        const anchoProducto = 134;
+        const anchoTotal = anchoTabla - anchoProducto;
+        const tablaY = 46;
+        const altoEncabezado = 12;
         const altoFila = 12;
         const altoFilaTotal = 12;
-        const pieY = altoPagina - 12;
-        const espacioSeguridad = 6;
-        const filasPorPagina = Math.max(
-            1,
-            Math.floor(
-                (
-                    pieY -
-                    encabezadoTablaY -
-                    altoEncabezadoTabla -
-                    altoFilaTotal -
-                    espacioSeguridad
-                ) / altoFila
-            )
-        );
-        const cantidadPaginas = Math.max(
-            1,
-            Math.ceil(productos.length / filasPorPagina)
-        );
-
-        const anchoTotal = 24;
-        const anchoProducto = Math.max(
-            58,
-            90 - (cajas.length - 1) * 8
-        );
-        const anchoCaja =
-            (anchoTabla - anchoProducto - anchoTotal) / cajas.length;
-        const anchosColumnas = [
-            anchoProducto,
-            ...cajas.map(() => anchoCaja),
-            anchoTotal
-        ];
-        const posicionesColumnas = [];
-        let siguienteX = margen;
-        anchosColumnas.forEach(ancho => {
-            posicionesColumnas.push(siguienteX);
-            siguienteX += ancho;
-        });
-
-        const colores = {
-            texto: [35, 42, 52],
-            negro: [0, 0, 0],
-            tenue: [105, 114, 126],
-            alterno: [238, 238, 238],
-            encabezado: [0, 0, 0],
-            filaTotal: [230, 230, 230],
-            blanco: [255, 255, 255]
-        };
-
-        const dibujarEncabezado = () => {
-            if (logoData) {
-                pdf.addImage(
-                    logoData,
-                    tipoLogo,
-                    margen - 9,
-                    margen - 9,
-                    32,
-                    32
-                );
-            }
-            const desplazamientoMarca = logoData ? 18 : 0;
-            pdf.setTextColor(...colores.texto);
-            pdf.setFont("helvetica", "bold");
-            pdf.setFontSize(17);
-            pdf.text("MAMÁ POTOSÍ", margen + desplazamientoMarca, margen + 7);
-
-            pdf.setFontSize(8.5);
-            pdf.text("USO TOTAL", margen + desplazamientoMarca, margen + 18);
-
-            pdf.setFont("helvetica", "bold");
-            pdf.setFontSize(9);
-            pdf.setTextColor(...colores.negro);
-            pdf.text(`FECHA: ${fecha}`, margen + anchoTabla, margen + 6, {
-                align: "right",
-                maxWidth: 68
-            });
-            pdf.text(`HORA: ${hora}`, margen + anchoTabla, margen + 12, {
-                align: "right",
-                maxWidth: 68
-            });
-
-            pdf.setFont("helvetica", "bold");
-            pdf.setFontSize(7.5);
-            pdf.text(`REFERENCIA: ${referencia}`, margen + anchoTabla, margen + 19, {
-                align: "right",
-                maxWidth: 68
-            });
-
-        };
-
-        const dibujarCabeceraTabla = () => {
-            pdf.setFillColor(...colores.encabezado);
-            pdf.rect(
-                margen,
-                encabezadoTablaY,
-                anchoTabla,
-                altoEncabezadoTabla,
-                "F"
+        const filasPorPagina = 17;
+        const paginas = Math.ceil(productos.length / filasPorPagina);
+        const totalUtilizado = productos.reduce((total, producto) => {
+            const porCajas = cajas.reduce(
+                (suma, caja) => suma + numeroSeguro(caja.utilizados[producto.id]),
+                0
             );
-            pdf.setTextColor(...colores.blanco);
-            pdf.setFont("helvetica", "bold");
-            pdf.setFontSize(11);
-            const lineaBase =
-                encabezadoTablaY + altoEncabezadoTabla / 2 + 2;
-
-            pdf.text(
-                "PRODUCTO",
-                posicionesColumnas[0] + anchoProducto / 2,
-                lineaBase,
-                { align: "center" }
-            );
-            cajas.forEach((caja, indice) => {
-                pdf.text(
-                    `CAJA ${caja.numero}`,
-                    posicionesColumnas[indice + 1] + anchoCaja / 2,
-                    lineaBase,
-                    { align: "center" }
-                );
-            });
-            pdf.text(
-                "TOTAL",
-                posicionesColumnas[posicionesColumnas.length - 1] +
-                    anchoTotal / 2,
-                lineaBase,
-                { align: "center" }
-            );
-        };
-
-        const dibujarPie = pagina => {
-            pdf.setTextColor(...colores.tenue);
-            pdf.setFont("helvetica", "normal");
-            pdf.setFontSize(8);
-            pdf.text(`REFERENCIA: ${referencia}`, margen, pieY);
-            pdf.text(
-                `PÁGINA ${pagina} DE ${cantidadPaginas}`,
-                anchoPagina - margen,
-                pieY,
-                { align: "right" }
-            );
-        };
+            return total +
+                porCajas +
+                cantidadDeConsumo("bartender", producto.id) +
+                cantidadDeConsumo("mesas", producto.id);
+        }, 0);
 
         pdf.setProperties({
-            title: "Uso total - Mamá Potosí",
-            subject: `Reporte ${referencia}`,
+            title: "Mamá Potosí - Uso total",
+            subject: `Uso total del ${fecha}`,
             author: "Mamá Potosí",
             creator: "Control de cajas y suministros"
         });
 
-        for (let pagina = 0; pagina < cantidadPaginas; pagina++) {
-            if (pagina > 0) pdf.addPage();
-            dibujarEncabezado();
-            dibujarCabeceraTabla();
+        for (let numeroPagina = 0; numeroPagina < paginas; numeroPagina++) {
+            if (numeroPagina > 0) pdf.addPage("a4", "portrait");
 
-            const inicio = pagina * filasPorPagina;
-            const productosPagina = productos.slice(
-                inicio,
-                inicio + filasPorPagina
-            );
-            const filaTextoOffset = altoFila / 2 + 2;
+            pdf.setTextColor(30, 35, 40);
+            pdf.addImage(logo, "PNG", 6, 4, 29, 29);
+            pdf.setFont("helvetica", "bold");
+            pdf.setFontSize(16);
+            pdf.text("MAMÁ POTOSÍ", 39, 16.5);
+            pdf.setFontSize(8.5);
+            pdf.text("USO TOTAL", 39, 27);
 
-            productosPagina.forEach((producto, indiceFila) => {
-                const indiceProducto = inicio + indiceFila;
-                const y = encabezadoTablaY +
-                    altoEncabezadoTabla +
-                    indiceFila * altoFila;
-                const totalProducto = cajas.reduce(
-                    (suma, caja) => suma + caja.utilizados[producto.id],
-                    0
-                );
-
-                pdf.setFillColor(
-                    ...(indiceProducto % 2 === 0
-                        ? colores.blanco
-                        : colores.alterno)
-                );
-                pdf.rect(margen, y, anchoTabla, altoFila, "F");
-
-                pdf.setTextColor(...colores.texto);
-                pdf.setFont("helvetica", "normal");
-                pdf.setFontSize(10.5);
-                pdf.text(
-                    producto.nombre,
-                    posicionesColumnas[0] + anchoProducto / 2,
-                    y + filaTextoOffset,
-                    {
-                        align: "center",
-                        maxWidth: anchoProducto - 6
-                    }
-                );
-
-                pdf.setFont("helvetica", "bold");
-                pdf.setFontSize(14);
-                cajas.forEach((caja, indiceCaja) => {
-                    pdf.text(
-                        String(caja.utilizados[producto.id]),
-                        posicionesColumnas[indiceCaja + 1] + anchoCaja / 2,
-                        y + filaTextoOffset,
-                        { align: "center" }
-                    );
-                });
-                pdf.text(
-                    String(totalProducto),
-                    posicionesColumnas[posicionesColumnas.length - 1] +
-                        anchoTotal / 2,
-                    y + filaTextoOffset,
-                    { align: "center" }
-                );
+            pdf.setFont("helvetica", "bold");
+            pdf.setFontSize(7.5);
+            pdf.text(`FECHA: ${fecha}`, anchoPagina - margen, 15.5, {
+                align: "right"
+            });
+            pdf.text(`HORA: ${hora}`, anchoPagina - margen, 22, {
+                align: "right"
+            });
+            pdf.setFontSize(6.8);
+            pdf.text(`REFERENCIA: ${referencia}`, anchoPagina - margen, 28.5, {
+                align: "right"
             });
 
-            let tablaFinY = encabezadoTablaY +
-                altoEncabezadoTabla +
-                productosPagina.length * altoFila;
+            pdf.setFillColor(0, 0, 0);
+            pdf.rect(margen, tablaY, anchoTabla, altoEncabezado, "F");
+            pdf.setFont("helvetica", "bold");
+            pdf.setFontSize(9);
+            pdf.setTextColor(255, 255, 255);
+            pdf.text(
+                "PRODUCTO",
+                margen + anchoProducto / 2,
+                tablaY + 7.5,
+                { align: "center" }
+            );
+            pdf.text(
+                "TOTAL",
+                margen + anchoProducto + anchoTotal / 2,
+                tablaY + 7.5,
+                { align: "center" }
+            );
 
-            if (pagina === cantidadPaginas - 1) {
-                pdf.setFillColor(...colores.filaTotal);
-                pdf.rect(
-                    margen,
-                    tablaFinY,
-                    anchoTabla,
-                    altoFilaTotal,
-                    "F"
+            const inicio = numeroPagina * filasPorPagina;
+            const fin = Math.min(inicio + filasPorPagina, productos.length);
+            pdf.setFont("helvetica", "normal");
+            pdf.setFontSize(9);
+
+            for (let indice = inicio; indice < fin; indice++) {
+                const producto = productos[indice];
+                const filaEnPagina = indice - inicio;
+                const y = tablaY + altoEncabezado + filaEnPagina * altoFila;
+                const porCajas = cajas.reduce(
+                    (suma, caja) => suma + numeroSeguro(caja.utilizados[producto.id]),
+                    0
                 );
+                const total = porCajas +
+                    cantidadDeConsumo("bartender", producto.id) +
+                    cantidadDeConsumo("mesas", producto.id);
 
-                pdf.setTextColor(...colores.texto);
+                pdf.setFillColor(
+                    ...(filaEnPagina % 2 === 0 ? [255, 255, 255] : [235, 235, 235])
+                );
+                pdf.rect(margen, y, anchoTabla, altoFila, "F");
+                pdf.setTextColor(40, 40, 40);
+                pdf.text(
+                    producto.nombre,
+                    margen + anchoProducto / 2,
+                    y + 7.6,
+                    { align: "center", maxWidth: anchoProducto - 6 }
+                );
                 pdf.setFont("helvetica", "bold");
-                pdf.setFontSize(14);
+                pdf.setFontSize(10);
                 pdf.text(
-                    "TOTAL GENERAL",
-                    posicionesColumnas[0] + anchoProducto / 2,
-                    tablaFinY + altoFilaTotal / 2 + 2,
+                    String(total),
+                    margen + anchoProducto + anchoTotal / 2,
+                    y + 7.6,
                     { align: "center" }
                 );
-                totalesCaja.forEach((total, indiceCaja) => {
-                    pdf.text(
-                        String(total),
-                        posicionesColumnas[indiceCaja + 1] + anchoCaja / 2,
-                        tablaFinY + altoFilaTotal / 2 + 2,
-                        { align: "center" }
-                    );
-                });
-                pdf.text(
-                    String(totalGeneral),
-                    posicionesColumnas[posicionesColumnas.length - 1] +
-                        anchoTotal / 2,
-                    tablaFinY + altoFilaTotal / 2 + 2,
-                    { align: "center" }
-                );
-                tablaFinY += altoFilaTotal;
+                pdf.setFont("helvetica", "normal");
+                pdf.setFontSize(9);
             }
 
-            dibujarPie(pagina + 1);
+            if (numeroPagina === paginas - 1) {
+                const filasEnPagina = fin - inicio;
+                const totalY = tablaY + altoEncabezado + filasEnPagina * altoFila;
+                pdf.setFillColor(225, 225, 225);
+                pdf.rect(margen, totalY, anchoTabla, altoFilaTotal, "F");
+                pdf.setFont("helvetica", "bold");
+                pdf.setFontSize(9);
+                pdf.setTextColor(35, 35, 35);
+                pdf.text(
+                    "TOTAL GENERAL",
+                    margen + anchoProducto / 2,
+                    totalY + 7.6,
+                    { align: "center" }
+                );
+                pdf.setFontSize(10);
+                pdf.text(
+                    String(totalUtilizado),
+                    margen + anchoProducto + anchoTotal / 2,
+                    totalY + 7.6,
+                    { align: "center" }
+                );
+            }
+
+            pdf.setFont("helvetica", "normal");
+            pdf.setFontSize(7);
+            pdf.setTextColor(120, 120, 120);
+            pdf.text(`REFERENCIA: ${referencia}`, margen, altoPagina - 10);
+            pdf.text(
+                `PÁGINA ${numeroPagina + 1} DE ${paginas}`,
+                anchoPagina - margen,
+                altoPagina - 10,
+                { align: "right" }
+            );
         }
 
         pdf.save(nombreArchivo);
     } catch (error) {
-        console.error(error);
-        alert("Ocurrió un error al generar el PDF. Inténtalo nuevamente.");
+        console.error("No se pudo generar el PDF de utilizados:", error);
+        alert("No se pudo cargar el logo o generar el PDF. Revisa la conexión e inténtalo nuevamente.");
     }
 }
 
@@ -921,8 +1258,13 @@ function iniciarSistema() {
 
         seccion.appendChild(titulo);
         seccion.appendChild(iframe);
+        if (numero === 4) {
+            seccion.appendChild(crearHojaConsumosCaja4());
+        }
         contenedor.appendChild(seccion);
     }
+
+    cargarConsumosCaja4();
 }
 
 window.addEventListener("message", function(evento) {
@@ -950,4 +1292,9 @@ window.addEventListener("message", function(evento) {
 });
 
 window.onload = iniciarSistema;
+
+window.addEventListener("pagehide", () => {
+    if (ES_HOJA_CAJA) guardarDatos();
+    else guardarConsumosCaja4();
+});
 
