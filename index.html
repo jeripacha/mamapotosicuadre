@@ -7,13 +7,13 @@
     <link rel="stylesheet" href="style.css">
     <link rel="icon" type="image/png" href="/350C8440-E7BF-457F-8DA3-CE39BB2AF3B6.PNG">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </head>
 <body>
 
     <div class="controles">
         <button class="btn-pdf" onclick="descargarPDF()">Generar PDF</button>
         <button class="btn-borrar" onclick="borrarTodo()">Limpiar</button>
+        <span class="estado-guardado" id="estado-guardado">Se guarda automáticamente en este dispositivo</span>
     </div>
 
     <div id="documento">
@@ -94,6 +94,7 @@
                 </tfoot>
             </table>
         </div>
+
     </div>
 
     <div id="notificacion" style="
