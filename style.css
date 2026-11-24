@@ -6,13 +6,13 @@
 
         /* Busca #documento y cámbialo por este: */
         #documento { 
-            width: 210mm; 
+            width: 216mm;
             background: white; 
             margin: 0 auto; 
             /* Aumentamos el padding lateral para "empujar" el contenido hacia adentro */
             padding: 10mm 8mm; 
             box-sizing: border-box;
-            min-height: 270mm; 
+            min-height: 0;
             display: block; 
         }
 
@@ -219,6 +219,11 @@
 
         input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
         input[type=number] { -moz-appearance: textfield; }
+        @page {
+            size: letter portrait;
+            margin: 5mm;
+        }
+
         @media print {
             .controles {
                 display: none !important;
@@ -231,9 +236,9 @@
             }
 
             #documento {
-                width: 210mm !important;
-                margin: 0 auto !important;     /* ✅ CENTRADO REAL */
-                padding: 5mm 10mm !important; /* ✅ MISMO padding */
+                width: 100% !important;
+                margin: 0 !important;
+                padding: 0 !important;
                 min-height: auto !important;
                 box-sizing: border-box !important;
             }
@@ -566,4 +571,189 @@
 #reporte-utilizados .total-amarillo {
     background-color: #FFE66D !important;
     color: #111111 !important;
+}
+
+/* Registro editable de bartender al final de cada hoja */
+.tabla-bartender {
+    margin-top: 6mm;
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.tabla-bartender th {
+    height: 22px;
+}
+
+.tabla-bartender td {
+    height: 24px;
+}
+
+.input-bartender,
+.input-producto-bartender {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    border: none;
+    padding: 2px 5px;
+    background: transparent;
+    font: inherit;
+    font-size: 11px;
+    text-align: left;
+    outline: none;
+}
+
+@media (max-width: 768px) {
+    .tabla-bartender {
+        display: table;
+        white-space: normal;
+    }
+}
+
+.estado-guardado {
+    align-self: center;
+    color: #e5e5e5;
+    font-size: 12px;
+    line-height: 1.35;
+}
+
+.estado-guardado.error,
+.estado-consumos.error {
+    color: #b3261e;
+    font-weight: 700;
+}
+
+.hoja-consumos-caja4 {
+    margin-top: 18px;
+    padding: 16px;
+    border: 1px solid #d6d6d6;
+    border-radius: 8px;
+    background: #fff;
+    color: #161616;
+}
+
+.encabezado-consumos {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.encabezado-consumos h2 {
+    margin: 0;
+    font-size: 18px;
+}
+
+.encabezado-consumos p,
+.estado-consumos {
+    margin: 5px 0 0;
+    color: #5d5d5d;
+    font-size: 12px;
+}
+
+.btn-borrar-consumos {
+    flex: 0 0 auto;
+    padding: 9px 15px;
+    border: 0;
+    border-radius: 5px;
+    background: #616161;
+    color: #fff;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.tablas-consumos {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    align-items: start;
+}
+
+.tabla-consumos-wrap {
+    min-width: 0;
+    overflow-x: auto;
+}
+
+.tabla-consumos-wrap h3 {
+    margin: 0;
+    padding: 8px;
+    background: #222;
+    color: white;
+    text-align: center;
+    font-size: 14px;
+}
+
+.tabla-consumos {
+    display: table !important;
+    width: 100%;
+    min-width: 300px;
+    border-collapse: collapse;
+    table-layout: fixed;
+    white-space: normal !important;
+}
+
+.tabla-consumos th,
+.tabla-consumos td {
+    height: 32px;
+    padding: 0;
+    border: 1px solid #bdbdbd;
+    font-size: 10px;
+}
+
+.tabla-consumos th {
+    background: #eeeeee;
+}
+
+.tabla-consumos th:first-child,
+.tabla-consumos .consumo-producto {
+    width: 72%;
+    text-align: left;
+}
+
+.tabla-consumos .consumo-producto {
+    padding: 4px 6px;
+    overflow-wrap: anywhere;
+}
+
+.tabla-consumos th:last-child {
+    width: 28%;
+}
+
+.consumo-cantidad {
+    display: block;
+    width: 100%;
+    min-width: 42px;
+    height: 32px;
+    box-sizing: border-box;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    text-align: center;
+    font-size: 11px;
+}
+
+.consumo-cantidad:focus-visible {
+    outline: 2px solid #2856a3;
+    outline-offset: -2px;
+}
+
+@media (max-width: 768px) {
+    .estado-guardado {
+        width: 100%;
+        text-align: center;
+    }
+
+    .encabezado-consumos {
+        align-items: flex-start;
+    }
+
+    .tablas-consumos {
+        grid-template-columns: 1fr;
+    }
+
+    .hoja-consumos-caja4 {
+        padding: 10px;
+    }
 }
