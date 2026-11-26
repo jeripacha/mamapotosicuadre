@@ -1,3 +1,8 @@
+const BASE_SCRIPT_URL = (() => {
+    const scriptUrl = document.currentScript?.src || document.baseURI;
+    return new URL(".", scriptUrl);
+})();
+
 const NUMERO_CAJA = Number(
     new URLSearchParams(window.location.search).get("caja")
 );
@@ -842,20 +847,62 @@ function limpiarConsumosCaja4() {
 
 
 async function cargarLogoPDF() {
-    const respuesta = await fetch("/350C8440-E7BF-457F-8DA3-CE39BB2AF3B6.PNG", {
-        cache: "force-cache"
-    });
-    if (!respuesta.ok) {
-        throw new Error("No se pudo cargar el logo de Mamá Potosí.");
+    const nombres = [
+        "350C8440-E7BF-457F-8DA3-CE39BB2AF3B6.PNG",
+        "350C8440-E7BF-457F-8DA3-CE39BB2AF3B6.png",
+        "350c8440-e7bf-457f-8da3-ce39bb2af3b6.png"
+    ];
+    const carpetas = [
+        "",
+        "public/",
+        "client/",
+        "client/public/",
+        "assets/",
+        "images/"
+    ];
+    const bases = [...new Set([
+        BASE_SCRIPT_URL.href,
+        new URL(".", document.baseURI).href
+    ])];
+    const rutas = bases.flatMap(base =>
+        carpetas.flatMap(carpeta =>
+            nombres.map(nombre => new URL(carpeta + nombre, base).href)
+        )
+    );
+    const errores = [];
+
+    for (const ruta of [...new Set(rutas)]) {
+        try {
+            const respuesta = await fetch(ruta, { cache: "no-cache" });
+            if (!respuesta.ok) {
+                errores.push(`${ruta}: ${respuesta.status}`);
+                continue;
+            }
+
+            const archivo = await respuesta.blob();
+            const encabezado = new Uint8Array(
+                await archivo.slice(0, 8).arrayBuffer()
+            );
+            const firmaPNG = [137, 80, 78, 71, 13, 10, 26, 10];
+            if (!firmaPNG.every((byte, indice) => encabezado[indice] === byte)) {
+                errores.push(`${ruta}: el archivo no es un PNG válido`);
+                continue;
+            }
+
+            return await new Promise((resolve, reject) => {
+                const lector = new FileReader();
+                lector.onload = () => resolve(lector.result);
+                lector.onerror = () =>
+                    reject(new Error("No se pudo leer el logo de Mamá Potosí."));
+                lector.readAsDataURL(archivo);
+            });
+        } catch (error) {
+            errores.push(`${ruta}: ${error.message || "error de lectura"}`);
+        }
     }
 
-    const archivo = await respuesta.blob();
-    return new Promise((resolve, reject) => {
-        const lector = new FileReader();
-        lector.onload = () => resolve(lector.result);
-        lector.onerror = () => reject(new Error("No se pudo leer el logo."));
-        lector.readAsDataURL(archivo);
-    });
+    console.error("No se encontró el logo en las rutas probadas:", errores);
+    throw new Error("No se encontró el archivo del logo de Mamá Potosí.");
 }
 
 async function descargarPDFUtilizados() {
@@ -1143,7 +1190,13 @@ async function descargarPDFUtilizados() {
         pdf.save(nombreArchivo);
     } catch (error) {
         console.error("No se pudo generar el PDF de utilizados:", error);
-        alert("No se pudo cargar el logo o generar el PDF. Revisa la conexión e inténtalo nuevamente.");
+        if (error instanceof Error && error.message.includes("No se encontró el archivo del logo")) {
+            alert(
+                "No se encontró el logo del PDF. Publica el archivo 350C8440-E7BF-457F-8DA3-CE39BB2AF3B6.PNG junto a index.html o dentro de public/ y vuelve a cargar la página."
+            );
+        } else {
+            alert("No se pudo generar el PDF. Recarga la página e inténtalo nuevamente.");
+        }
     }
 }
 
